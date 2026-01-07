@@ -59,8 +59,11 @@ param_grid = {
     'classifier__class_weight': [None, 'balanced']
 }
 
-# Grid search. Can do refit=True so that it retrains the best model on the full data
-grid_search = GridSearchCV(clf, param_grid, cv=5, scoring='roc_auc', n_jobs=-1)
+# Scoring criterias for grid search
+scoring = {"AUC": "roc_auc", "Accuracy": "accuracy", "F1": "f1"}
+
+# Grid search. currently refit for roc auc
+grid_search = GridSearchCV(clf, param_grid, cv=5, scoring=scoring, refit='AUC', n_jobs=-1)
 
 print("Starting Grid Search...")
 grid_search.fit(X, y)
