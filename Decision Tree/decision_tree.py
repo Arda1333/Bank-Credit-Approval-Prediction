@@ -105,7 +105,7 @@ print("\n--- DECISION RULES ---")
 print(tree_rules)
 
 
-# Tree visualizer
+# Tree visualizer (7 ve üstü fazla sıkışık)
 plt.figure(figsize=(20,10))
 plot_tree(best_model.named_steps['classifier'], 
           feature_names=feature_names, 
