@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
+from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold, GridSearchCV
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
@@ -12,7 +12,9 @@ from sklearn.metrics import (
     classification_report,
     confusion_matrix,
     roc_curve,
-    roc_auc_score
+    roc_auc_score,
+    f1_score,
+    precision_recall_curve,
 )
 from sklearn import tree
 import seaborn as sns
@@ -162,3 +164,59 @@ tree.plot_tree(
 )
 plt.title("Random Forest - Example Decision Tree (max_depth=3)")
 plt.show()
+
+print("F1 Score:", f1_score(y_test, y_pred))
+
+param_grid = {
+    "classifier__n_estimators": [100, 200, 400],
+    "classifier__max_depth": [None, 10, 20, 40],
+    "classifier__min_samples_split": [2, 5, 10],
+    "classifier__min_samples_leaf": [1, 2, 4],
+    "classifier__max_features": ["sqrt", "log2"]
+}
+
+grid_search = GridSearchCV(
+    estimator=model,
+    param_grid=param_grid,
+    scoring="f1",
+    cv=5,
+    n_jobs=-1,
+    verbose=2
+)
+
+grid_search.fit(X_train, y_train)
+
+print("\n====================")
+print("GRID SEARCH RESULTS")
+print("====================")
+print("Best parameters:", grid_search.best_params_)
+print("Best CV F1 score:", grid_search.best_score_)
+
+
+best_model = grid_search.best_estimator_
+
+y_pred_tuned = best_model.predict(X_test)
+y_proba_tuned = best_model.predict_proba(X_test)[:, 1]
+
+print("\n====================")
+print("TUNED MODEL METRICS")
+print("====================")
+print("Accuracy:", accuracy_score(y_test, y_pred_tuned))
+print("ROC-AUC:", roc_auc_score(y_test, y_proba_tuned))
+print("F1:", f1_score(y_test, y_pred_tuned))
+print("\nClassification Report (Tuned):\n")
+print(classification_report(y_test, y_pred_tuned))
+
+precision, recall, thresholds = precision_recall_curve(y_test, y_proba_tuned)
+f1_scores = 2 * (precision * recall) / (precision + recall + 1e-8)
+
+best_idx = np.argmax(f1_scores[:-1])
+best_threshold = thresholds[best_idx]
+
+y_pred_opt = (y_proba_tuned >= best_threshold).astype(int)
+
+print("\n====================")
+print("THRESHOLD OPTIMIZATION")
+print("====================")
+print("Best threshold:", best_threshold)
+print("F1 @ best threshold:", f1_score(y_test, y_pred_opt))
