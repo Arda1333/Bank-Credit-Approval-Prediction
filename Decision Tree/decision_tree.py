@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.model_selection import cross_val_score, KFold
+from sklearn.model_selection import cross_val_score, StratifiedKFold
 from sklearn.tree import DecisionTreeClassifier, plot_tree, export_text
 from sklearn.preprocessing import LabelEncoder
 from sklearn.impute import SimpleImputer
@@ -29,7 +29,7 @@ categorical_features = X.select_dtypes(include=['object']).columns
 
 # Create transformers for imputation and encoding
 # Numeric: Fill missing with Mean
-numeric_transformer = SimpleImputer(strategy='mean')
+numeric_transformer = SimpleImputer(strategy='median')
 
 # Categorical: Fill missing with Mode (most_frequent) AND One-Hot Encode
 categorical_transformer = Pipeline(steps=[
@@ -77,7 +77,7 @@ print(grid_search.best_params_)
 best_model = grid_search.best_estimator_
 
 # Define 5-Fold CV
-kf = KFold(n_splits=5, shuffle=True, random_state=42)
+kf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
 # Calculate scores
 cv_scores = cross_val_score(best_model, X, y, cv=kf, scoring='accuracy')
