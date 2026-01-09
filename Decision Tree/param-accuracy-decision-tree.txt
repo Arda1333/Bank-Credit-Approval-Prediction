@@ -1,5 +1,16 @@
 Best Parameters:
-{'classifier__class_weight': 'balanced', 'classifier__criterion': 'gini', 'classifier__max_depth': 3, 'classifier__min_samples_leaf': 2, 'classifier__min_samples_split': 2}
+{'classifier__class_weight': None, 'classifier__criterion': 'gini', 'classifier__max_depth': 3, 'classifier__min_samples_leaf': 2, 'classifier__min_samples_split': 2}
+
+Best Parameter Scores:
+Cross-Validation Scores: [0.81884058 0.78985507 0.86231884 0.85507246 0.86231884]
+Mean Accuracy: 0.84
+Accuracy Standard Deviation: 0.03
+ROC AUC Scores: [0.89738964 0.88879457 0.93932297 0.885033   0.95486481]
+Mean ROC AUC: 0.91
+ROC AUC Standard Deviation: 0.03
+F1 Scores: [0.84848485 0.78518519 0.86896552 0.85915493 0.88050314]
+Mean F1: 0.85
+F1 Standard Deviation: 0.03
 
 
 

@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.model_selection import cross_val_score, KFold
+from sklearn.model_selection import cross_val_score, StratifiedKFold
 from sklearn.tree import DecisionTreeClassifier, plot_tree, export_text
 from sklearn.preprocessing import LabelEncoder
 from sklearn.impute import SimpleImputer
@@ -29,7 +29,7 @@ categorical_features = X.select_dtypes(include=['object']).columns
 
 # Create transformers for imputation and encoding
 # Numeric: Fill missing with Mean
-numeric_transformer = SimpleImputer(strategy='mean')
+numeric_transformer = SimpleImputer(strategy='median')
 
 # Categorical: Fill missing with Mode (most_frequent) AND One-Hot Encode
 categorical_transformer = Pipeline(steps=[
@@ -59,8 +59,11 @@ param_grid = {
     'classifier__class_weight': [None, 'balanced']
 }
 
-# Grid search. Can do refit=True so that it retrains the best model on the full data
-grid_search = GridSearchCV(clf, param_grid, cv=5, scoring='roc_auc', n_jobs=-1)
+# Scoring criterias for grid search
+scoring = {"AUC": "roc_auc", "Accuracy": "accuracy", "F1": "f1"}
+
+# Grid search. currently refit for roc auc
+grid_search = GridSearchCV(clf, param_grid, cv=5, scoring=scoring, refit='AUC', n_jobs=-1)
 
 print("Starting Grid Search...")
 grid_search.fit(X, y)
@@ -74,11 +77,12 @@ print(grid_search.best_params_)
 best_model = grid_search.best_estimator_
 
 # Define 5-Fold CV
-kf = KFold(n_splits=5, shuffle=True, random_state=42)
+kf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
 # Calculate scores
 cv_scores = cross_val_score(best_model, X, y, cv=kf, scoring='accuracy')
 roc_auc_scores = cross_val_score(best_model, X, y, cv=kf, scoring='roc_auc')
+f1_scores = cross_val_score(best_model, X, y, cv=kf, scoring='f1')
 
 print(f"Cross-Validation Scores: {cv_scores}")
 print(f"Mean Accuracy: {cv_scores.mean():.2f}")
@@ -86,6 +90,9 @@ print(f"Accuracy Standard Deviation: {cv_scores.std():.2f}")
 print(f"ROC AUC Scores: {roc_auc_scores}")
 print(f"Mean ROC AUC: {roc_auc_scores.mean():.2f}")
 print(f"ROC AUC Standard Deviation: {roc_auc_scores.std():.2f}")
+print(f"F1 Scores: {f1_scores}")
+print(f"Mean F1: {f1_scores.mean():.2f}")
+print(f"F1 Standard Deviation: {f1_scores.std():.2f}")
 
 
 best_model.fit(X, y)
@@ -101,7 +108,7 @@ print("\n--- DECISION RULES ---")
 print(tree_rules)
 
 
-# Tree visualizer
+# Tree visualizer (7 ve üstü fazla sıkışık)
 plt.figure(figsize=(20,10))
 plot_tree(best_model.named_steps['classifier'], 
           feature_names=feature_names, 
