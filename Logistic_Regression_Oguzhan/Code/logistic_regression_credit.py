@@ -1,254 +1,252 @@
 """
-Logistic Regression model for the UCI Credit Approval dataset.
+Logistic Regression model for the UCI Credit Approval dataset
 
 This script:
-- Loads and preprocesses the data (using data_preprocessing.py)
-- Builds a unified preprocessing + logistic regression pipeline
-- Evaluates the model with 5-fold stratified cross-validation
-- Analyzes coefficients and odds ratios for interpretability
-- Plots the most important positive and negative coefficients
+- Loads and preprocesses the dataset using the shared preprocessing utilities
+- Runs Nested Cross-Validation (outer CV for evaluation, inner CV for hyperparameter tuning)
+- Reports CV metrics (AUC, accuracy, precision, recall, F1)
+- Fits a final model on the full dataset to save best params + interpretability outputs (coefficients)
 """
 
-from pathlib import Path
-
+import json
 import numpy as np
 import pandas as pd
-import matplotlib
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 
-from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
-from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import StratifiedKFold, cross_validate
 
-from data_preprocessing import (
-    load_raw_data,
-    preprocess_data,
-    FEATURE_COLS,
-    TARGET_COL,
-    NUMERIC_FEATURES,
-    CATEGORICAL_FEATURES,
+from sklearn.linear_model import LogisticRegression
+
+from sklearn.model_selection import StratifiedKFold, GridSearchCV
+from sklearn.metrics import (
+    accuracy_score,
+    roc_auc_score,
+    precision_score,
+    recall_score,
+    f1_score,
 )
 
-# Use a backend that opens plots in a separate window
-matplotlib.use("TkAgg")
+from data_preprocessing import load_raw_data, preprocess_data
+
+def ensure_dir(path: Path):
+    path.mkdir(parents=True, exist_ok=True)
 
 
-# ============================================================================
-# 1. Pipeline construction (preprocessing + Logistic Regression)
-# ============================================================================
+def save_json(path: Path, obj: dict):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(obj, f, indent=2)
 
-def build_logistic_pipeline() -> Pipeline:
+
+def safe_get_feature_names(preprocess: ColumnTransformer):
     """
-    Build a scikit-learn Pipeline that:
-    - imputes and scales numeric features
-    - imputes and one-hot encodes categorical features
-    - trains a Logistic Regression classifier
+    Extract feature names from ColumnTransformer after one-hot encoding.
+    Works across sklearn versions as best-effort.
     """
+    feature_names = []
+    for name, trans, cols in preprocess.transformers_:
+        if name == "remainder" and trans == "drop":
+            continue
 
-    # Numeric preprocessing
-    numeric_transformer = Pipeline(steps=[
+        if hasattr(trans, "named_steps"):
+            last = list(trans.named_steps.values())[-1]
+        else:
+            last = trans
+
+        if hasattr(last, "get_feature_names_out"):
+            try:
+                fn = last.get_feature_names_out(cols)
+            except TypeError:
+                fn = last.get_feature_names_out()
+            feature_names.extend(list(fn))
+        else:
+            if isinstance(cols, (list, tuple, np.ndarray)):
+                feature_names.extend([str(c) for c in cols])
+            else:
+                feature_names.append(str(cols))
+    return feature_names
+
+def build_pipeline_from_df(df: pd.DataFrame):
+    """
+    Create ColumnTransformer based on df dtypes:
+    - numeric: impute median + scale
+    - categorical: impute most_frequent + onehot
+    """
+    numeric_features = df.select_dtypes(include=[np.number]).columns.tolist()
+    categorical_features = [c for c in df.columns if c not in numeric_features]
+
+    num_pipe = Pipeline(steps=[
         ("imputer", SimpleImputer(strategy="median")),
         ("scaler", StandardScaler()),
     ])
 
-    # Categorical preprocessing
-    categorical_transformer = Pipeline(steps=[
+    cat_pipe = Pipeline(steps=[
         ("imputer", SimpleImputer(strategy="most_frequent")),
         ("onehot", OneHotEncoder(handle_unknown="ignore")),
     ])
 
-    # Combine both into a ColumnTransformer
-    preprocessor = ColumnTransformer(
+    preprocess = ColumnTransformer(
         transformers=[
-            ("num", numeric_transformer, NUMERIC_FEATURES),
-            ("cat", categorical_transformer, CATEGORICAL_FEATURES),
-        ]
+            ("num", num_pipe, numeric_features),
+            ("cat", cat_pipe, categorical_features),
+        ],
+        remainder="drop",
+        sparse_threshold=0.3,
     )
 
-    # Logistic Regression model
-    log_reg = LogisticRegression(
-        penalty="l2",
-        C=1.0,
-        solver="liblinear",
-        max_iter=1000,
-    )
+    model = LogisticRegression(max_iter=2000)
 
-    # Full pipeline: preprocessing + model
-    clf = Pipeline(steps=[
-        ("preprocess", preprocessor),
-        ("model", log_reg),
+    pipe = Pipeline(steps=[
+        ("preprocess", preprocess),
+        ("model", model),
     ])
+    return pipe
 
-    return clf
-
-
-# ============================================================================
-# 2. Cross-validation evaluation
-# ============================================================================
-
-def evaluate_with_cv(clf: Pipeline, X: pd.DataFrame, y: pd.Series, n_splits: int = 5) -> None:
+def nested_cv_logreg(X: pd.DataFrame, y: np.ndarray, out_dir: Path):
     """
-    Evaluate the logistic regression pipeline using stratified k-fold cross-validation.
-
-    Prints mean and standard deviation for Accuracy and ROC-AUC.
+    Nested CV:
+      - Outer CV reports unbiased metrics
+      - Inner CV selects hyperparameters by ROC-AUC
     """
-    cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+    outer_cv = StratifiedKFold(5, shuffle=True, random_state=42)
 
-    scoring = {
-        "accuracy": "accuracy",
-        "roc_auc": "roc_auc",
+    param_grid = {
+        "model__penalty": ["l1", "l2"],
+        "model__C": [0.01, 0.1, 1.0, 10.0, 100.0],
+        "model__class_weight": [None, "balanced"],
+        "model__solver": ["liblinear"],  # supports l1/l2 for binary
     }
 
-    cv_results = cross_validate(
-        clf,
-        X,
-        y,
-        cv=cv,
-        scoring=scoring,
-        return_train_score=False,
-    )
+    outer_metrics = []
+    fold = 0
 
-    acc_mean = cv_results["test_accuracy"].mean()
-    acc_std = cv_results["test_accuracy"].std()
+    for train_idx, test_idx in outer_cv.split(X, y):
+        fold += 1
+        X_tr, X_te = X.iloc[train_idx], X.iloc[test_idx]
+        y_tr, y_te = y[train_idx], y[test_idx]
 
-    auc_mean = cv_results["test_roc_auc"].mean()
-    auc_std = cv_results["test_roc_auc"].std()
+        clf = build_pipeline_from_df(X_tr)
 
-    print("\n=== 5-Fold Cross Validation Results (Logistic Regression) ===")
-    print(f"Accuracy (mean ± std): {acc_mean:.4f} ± {acc_std:.4f}")
-    print(f"ROC-AUC  (mean ± std): {auc_mean:.4f} ± {auc_std:.4f}")
+        inner_cv = StratifiedKFold(5, shuffle=True, random_state=42)
 
+        grid = GridSearchCV(
+            clf,
+            param_grid,
+            scoring="roc_auc",
+            cv=inner_cv,
+            n_jobs=-1,
+            refit=True,
+        )
 
-# ============================================================================
-# 3. Coefficient and odds ratio analysis (interpretability)
-# ============================================================================
+        grid.fit(X_tr, y_tr)
+        best = grid.best_estimator_
 
-def analyze_coefficients(clf: Pipeline, X: pd.DataFrame, y: pd.Series) -> pd.DataFrame:
-    """
-    Fit the pipeline on the full dataset and compute:
+        y_prob = best.predict_proba(X_te)[:, 1]
+        y_pred = (y_prob >= 0.5).astype(int)
 
-    - Coefficients of the Logistic Regression model
-    - Corresponding odds ratios (exp(coef))
-    - A table of (feature, coef, odds_ratio), sorted by |coef|
+        metrics = {
+            "fold": fold,
+            "roc_auc": float(roc_auc_score(y_te, y_prob)),
+            "accuracy": float(accuracy_score(y_te, y_pred)),
+            "precision": float(precision_score(y_te, y_pred, zero_division=0)),
+            "recall": float(recall_score(y_te, y_pred, zero_division=0)),
+            "f1": float(f1_score(y_te, y_pred, zero_division=0)),
+            "best_params": grid.best_params_,
+        }
+        outer_metrics.append(metrics)
+        save_json(out_dir / f"nestedcv_fold_{fold}.json", metrics)
 
-    Returns
-    -------
-    coef_table : pd.DataFrame
-        DataFrame with columns ['feature', 'coef', 'odds_ratio'].
-    """
-    print("\n=== Coefficient & Odds Ratio Analysis ===")
+    dfm = pd.DataFrame(outer_metrics)
+    summary = {
+        "roc_auc_mean": float(dfm["roc_auc"].mean()),
+        "roc_auc_std": float(dfm["roc_auc"].std(ddof=1)),
+        "accuracy_mean": float(dfm["accuracy"].mean()),
+        "accuracy_std": float(dfm["accuracy"].std(ddof=1)),
+        "precision_mean": float(dfm["precision"].mean()),
+        "precision_std": float(dfm["precision"].std(ddof=1)),
+        "recall_mean": float(dfm["recall"].mean()),
+        "recall_std": float(dfm["recall"].std(ddof=1)),
+        "f1_mean": float(dfm["f1"].mean()),
+        "f1_std": float(dfm["f1"].std(ddof=1)),
+    }
+    save_json(out_dir / "nestedcv_summary.json", summary)
+    dfm.to_csv(out_dir / "nestedcv_folds.csv", index=False)
 
-    # Fit the model on the full data
-    clf.fit(X, y)
+    return summary
 
-    # Extract the OneHotEncoder from the pipeline
-    ohe = (
-        clf.named_steps["preprocess"]
-        .named_transformers_["cat"]
-        .named_steps["onehot"]
-    )
+def save_coef_analysis(best_model: Pipeline, out_dir: Path):
+    preprocess = best_model.named_steps["preprocess"]
+    model = best_model.named_steps["model"]
 
-    # Get the expanded categorical feature names after one-hot encoding
-    ohe_feature_names = ohe.get_feature_names_out(CATEGORICAL_FEATURES)
+    feat_names = safe_get_feature_names(preprocess)
 
-    # Combine numeric + expanded categorical feature names
-    all_features = list(NUMERIC_FEATURES) + list(ohe_feature_names)
+    coefs = model.coef_.ravel()
+    odds = np.exp(coefs)
 
-    # Extract logistic regression coefficients and compute odds ratios
-    coef = clf.named_steps["model"].coef_[0]
-    odds_ratio = np.exp(coef)
+    df = pd.DataFrame({
+        "feature": feat_names,
+        "coef": coefs,
+        "odds_ratio": odds,
+    }).sort_values("coef", ascending=False)
 
-    coef_table = pd.DataFrame({
-        "feature": all_features,
-        "coef": coef,
-        "odds_ratio": odds_ratio,
-    })
+    df.to_csv(out_dir / "logreg_coefficients.csv", index=False)
 
-    # Sort by absolute magnitude of the coefficient
-    coef_table = coef_table.reindex(
-        coef_table["coef"].abs().sort_values(ascending=False).index
-    )
+    df_abs = df.copy()
+    df_abs["abs"] = df_abs["coef"].abs()
+    df_abs = df_abs.sort_values("abs", ascending=False)
 
-    print("\nTop 20 features by |coef|:")
-    print(coef_table.head(20))
+    topk = 15
+    top = df_abs.head(topk).sort_values("coef", ascending=True)
 
-    return coef_table
-
-
-# ============================================================================
-# 4. Coefficient visualization
-# ============================================================================
-
-def plot_top_coefficients(coef_table: pd.DataFrame, top_n: int = 10) -> None:
-    """
-    Plot bar charts for the top positive and top negative coefficients.
-
-    Parameters
-    ----------
-    coef_table : pd.DataFrame
-        Table returned by analyze_coefficients().
-    top_n : int
-        Number of top positive and negative features to show.
-    """
-    print("\n=== Plotting Coefficient Importance ===")
-
-    # Top positive and top negative coefficients
-    top_positive = coef_table.sort_values(by="coef", ascending=False).head(top_n)
-    top_negative = coef_table.sort_values(by="coef", ascending=True).head(top_n)
-
-    # Positive coefficients
     plt.figure(figsize=(10, 6))
-    plt.barh(top_positive["feature"], top_positive["coef"], color="green")
-    plt.gca().invert_yaxis()
-    plt.title("Top Positive Coefficients (Logistic Regression)")
-    plt.xlabel("Coefficient")
+    plt.barh(top["feature"], top["coef"])
+    plt.title("Top coefficients (by absolute magnitude)")
     plt.tight_layout()
-    plt.show()
-
-    # Negative coefficients
-    plt.figure(figsize=(10, 6))
-    plt.barh(top_negative["feature"], top_negative["coef"], color="red")
-    plt.gca().invert_yaxis()
-    plt.title("Top Negative Coefficients (Logistic Regression)")
-    plt.xlabel("Coefficient")
-    plt.tight_layout()
-    plt.show()
+    plt.savefig(out_dir / "top_coefficients.png")
+    plt.close()
 
 
-# ============================================================================
-# 5. main()
-# ============================================================================
+def main():
+    out_dir = Path("outputs_logreg")
+    ensure_dir(out_dir)
 
-def main() -> None:
-    print("=== Loading raw data ===")
+    # Load + preprocess using your shared module
     df_raw = load_raw_data()
-    print("Raw shape:", df_raw.shape)
+    _, X, y_series = preprocess_data(df_raw)
+    y = y_series.to_numpy(dtype=int)
 
-    print("\n=== Basic preprocessing ===")
-    df, X, y = preprocess_data(df_raw)
-    print("Processed shape:", df.shape)
-    print("Missing values per column:\n", df.isna().sum())
-    print("Class distribution:\n", y.value_counts())
+    # Nested CV evaluation
+    summary = nested_cv_logreg(X, y, out_dir)
+    print("Nested CV summary:", summary)
 
-    print("\n=== Building Logistic Regression pipeline ===")
-    clf = build_logistic_pipeline()
-    print("Pipeline constructed.")
+    # Fit a single GridSearchCV on the FULL dataset (for best params + interpretability)
+    final_clf = build_pipeline_from_df(X)
+    final_param_grid = {
+        "model__penalty": ["l1", "l2"],
+        "model__C": [0.01, 0.1, 1.0, 10.0, 100.0],
+        "model__class_weight": [None, "balanced"],
+        "model__solver": ["liblinear"],
+    }
 
-    # Cross-validation
-    evaluate_with_cv(clf, X, y, n_splits=5)
+    final_cv = StratifiedKFold(5, shuffle=True, random_state=42)
+    final_grid = GridSearchCV(
+        final_clf,
+        final_param_grid,
+        scoring="roc_auc",
+        cv=final_cv,
+        n_jobs=-1,
+        refit=True,
+    )
+    final_grid.fit(X, y)
 
-    # Coefficient analysis
-    coef_table = analyze_coefficients(clf, X, y)
+    best_model = final_grid.best_estimator_
+    save_json(out_dir / "best_params.json", final_grid.best_params_)
 
-    # Optional: save coefficients to CSV for the report
-    # coef_table.to_csv(Path(__file__).resolve().parent.parent / "Data" / "logreg_coefficients.csv", index=False)
-
-    # Plot coefficients (comment out if not needed)
-    plot_top_coefficients(coef_table, top_n=10)
-
+    save_coef_analysis(best_model, out_dir)
 
 if __name__ == "__main__":
     main()

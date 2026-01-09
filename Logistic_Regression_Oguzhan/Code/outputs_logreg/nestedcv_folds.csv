@@ -1,0 +1,6 @@
+fold,roc_auc,accuracy,precision,recall,f1,best_params
+1,0.9225382003395586,0.8768115942028986,0.835820895522388,0.9032258064516129,0.8682170542635659,"{'model__C': 1.0, 'model__class_weight': None, 'model__penalty': 'l1', 'model__solver': 'liblinear'}"
+2,0.8909168081494058,0.8115942028985508,0.7368421052631579,0.9032258064516129,0.8115942028985508,"{'model__C': 1.0, 'model__class_weight': None, 'model__penalty': 'l1', 'model__solver': 'liblinear'}"
+3,0.9288907813497976,0.8623188405797102,0.8181818181818182,0.8852459016393442,0.8503937007874016,"{'model__C': 0.1, 'model__class_weight': 'balanced', 'model__penalty': 'l2', 'model__solver': 'liblinear'}"
+4,0.9350649350649352,0.8695652173913043,0.864406779661017,0.8360655737704918,0.85,"{'model__C': 1.0, 'model__class_weight': None, 'model__penalty': 'l2', 'model__solver': 'liblinear'}"
+5,0.966361507345114,0.9057971014492754,0.8529411764705882,0.9508196721311475,0.8992248062015504,"{'model__C': 0.1, 'model__class_weight': None, 'model__penalty': 'l2', 'model__solver': 'liblinear'}"
