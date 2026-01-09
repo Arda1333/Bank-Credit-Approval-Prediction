@@ -1,0 +1,14 @@
+{
+  "fold": 3,
+  "roc_auc": 0.9288907813497976,
+  "accuracy": 0.8623188405797102,
+  "precision": 0.8181818181818182,
+  "recall": 0.8852459016393442,
+  "f1": 0.8503937007874016,
+  "best_params": {
+    "model__C": 0.1,
+    "model__class_weight": "balanced",
+    "model__penalty": "l2",
+    "model__solver": "liblinear"
+  }
+}
